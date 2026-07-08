@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_vector_store():
     return build_vector_store(DOCS_DIR)
 
