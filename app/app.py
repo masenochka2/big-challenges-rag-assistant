@@ -13,12 +13,11 @@ DOCS_DIR = PROJECT_ROOT / "data" / "raw_docs"
 
 MIN_RETRIEVAL_SCORE = 0.18
 TOP_K = 3
-SHOW_DEBUG_INFO = False
 
 
 st.set_page_config(
-    page_title="Помощник БВ",
-    layout="wide",
+    page_title="БВ Помощник",
+    layout="centered",
 )
 
 
@@ -31,10 +30,8 @@ def build_retrieval_query(
     current_question: str,
     previous_question: Optional[str],
 ) -> str:
-    """
-    Если вопрос короткий или похож на уточнение, добавляем предыдущий вопрос.
-    Это помогает для фраз вроде: "А если мне 20?"
-    """
+
+    # Для коротких уточнений используем предыдущий вопрос как контекст.
     if not previous_question:
         return current_question
 
@@ -63,16 +60,51 @@ def build_retrieval_query(
 
 
 def get_previous_user_question() -> Optional[str]:
-    previous_user_questions = [
+    previous_questions = [
         message["content"]
         for message in st.session_state.messages
         if message["role"] == "user"
     ]
 
-    if not previous_user_questions:
+    if not previous_questions:
         return None
 
-    return previous_user_questions[-1]
+    return previous_questions[-1]
+
+
+def clean_source_text(text: str) -> str:
+    lines = text.strip().splitlines()
+
+    if lines and lines[0].startswith("## "):
+        lines = lines[1:]
+
+    cleaned_text = "\n".join(lines).strip()
+
+    return cleaned_text
+
+
+def render_sources(results) -> None:
+    if not results:
+        return
+
+    with st.expander("Источники"):
+        st.caption(
+            "Фрагменты базы знаний, на которые опирался ответ."
+        )
+
+        for index, result in enumerate(results, start=1):
+            title = result.get("title", "Раздел базы знаний")
+            source_text = clean_source_text(result.get("text", ""))
+
+            st.markdown(f"**{index}. {title}**")
+
+            if source_text:
+                st.markdown(source_text)
+            else:
+                st.markdown("Текст источника не найден.")
+
+            if index != len(results):
+                st.divider()
 
 
 def process_question(question: str) -> None:
@@ -90,7 +122,7 @@ def process_question(question: str) -> None:
         }
     )
 
-    with st.spinner("Ищу информацию в базе знаний..."):
+    with st.spinner("Ищу информацию..."):
         vector_store = load_vector_store()
 
         results = retrieve_relevant_chunks(
@@ -101,11 +133,12 @@ def process_question(question: str) -> None:
 
     if not results or results[0]["score"] < MIN_RETRIEVAL_SCORE:
         assistant_message = (
-            "Я не нашёл достаточно точной информации в базе знаний, чтобы уверенно ответить. "
-            "Лучше проверить официальный сайт конкурса или уточнить вопрос у координатора."
+            "Я не нашёл достаточно точной информации в базе знаний, "
+            "чтобы уверенно ответить. Лучше проверить официальный сайт конкурса "
+            "или уточнить вопрос у координатора."
         )
     else:
-        with st.spinner("Формирую ответ..."):
+        with st.spinner("Готовлю ответ..."):
             assistant_message = generate_rag_answer(
                 question=question,
                 retrieved_chunks=results,
@@ -117,7 +150,6 @@ def process_question(question: str) -> None:
             "role": "assistant",
             "content": assistant_message,
             "results": results,
-            "retrieval_query": retrieval_query,
         }
     )
 
@@ -126,9 +158,10 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 
-st.title("Помощник по Большим вызовам")
+st.title("БВ Помощник")
+
 st.caption(
-    "RAG-ассистент по конкурсу «Большие вызовы» в Новосибирской области"
+    "Помощник по конкурсу «Большие вызовы» в Новосибирской области"
 )
 
 tab_chat, tab_about = st.tabs(["Чат", "О проекте"])
@@ -137,30 +170,30 @@ tab_chat, tab_about = st.tabs(["Чат", "О проекте"])
 with tab_chat:
     st.markdown(
         """
-        Задайте вопрос о конкурсе **«Большие вызовы»** в Новосибирской области.  
-        Ассистент ищет информацию в базе знаний, отвечает простым языком и показывает источники.
+        Задайте вопрос о конкурсе. Помощник найдёт информацию в базе знаний,
+        ответит простым языком и покажет источники.
         """
     )
 
     st.info(
-        "Ассистент не заменяет официальный сайт конкурса и координатора. "
-        "Сроки, регистрацию и актуальные требования лучше проверять на официальных ресурсах."
+        "Помощник не заменяет официальный сайт конкурса. "
+        "Актуальные сроки, регистрацию и требования лучше проверять на официальных ресурсах."
     )
 
     st.markdown("### Быстрые вопросы")
 
-    cols = st.columns(3)
+    columns = st.columns(2)
     selected_question = None
 
     for index, example_question in enumerate(EXAMPLE_QUESTIONS):
-        with cols[index % 3]:
+        with columns[index % 2]:
             if st.button(example_question, use_container_width=True):
                 selected_question = example_question
 
-    st.divider()
-
     if st.session_state.messages:
-        if st.button("Очистить историю"):
+        st.divider()
+
+        if st.button("Очистить чат"):
             st.session_state.messages = []
             st.rerun()
 
@@ -168,38 +201,11 @@ with tab_chat:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-            if message["role"] == "assistant" and "results" in message:
-                st.markdown("**Источники:**")
-
-                for i, result in enumerate(message["results"], start=1):
-                    st.markdown(
-                        f"{i}. `{result['source']}` — "
-                        f"**{result['title']}**"
-                    )
-
-                with st.expander("Показать найденные фрагменты"):
-                    for i, result in enumerate(message["results"], start=1):
-                        st.markdown(f"### {i}. {result['title']}")
-                        st.caption(
-                            f"Источник: {result['source']} | "
-                            f"score={result['score']:.3f}"
-                        )
-                        st.write(result["text"])
-
-                        if SHOW_DEBUG_INFO:
-                            st.caption(
-                                f"semantic_score={result['semantic_score']:.3f}, "
-                                f"keyword_score={result['keyword_score']:.3f}"
-                            )
-
-                        st.divider()
-
-                if SHOW_DEBUG_INFO and "retrieval_query" in message:
-                    with st.expander("Технический запрос для поиска"):
-                        st.code(message["retrieval_query"])
+            if message["role"] == "assistant":
+                render_sources(message.get("results", []))
 
     typed_question = st.chat_input(
-        "Задайте вопрос про «Большие вызовы»..."
+        "Напишите вопрос о конкурсе..."
     )
 
     question = typed_question or selected_question
@@ -214,27 +220,23 @@ with tab_about:
         """
         ### О проекте
 
-        **БВ Помощник** — это RAG-ассистент для ответов на вопросы о конкурсе
+        **БВ Помощник** — это справочный ассистент по конкурсу
         **«Большие вызовы»** в Новосибирской области.
 
-        Проект предназначен для демонстрации того, как можно использовать RAG-подход
-        для справочного ассистента по образовательной программе.
+        Он отвечает на вопросы по подготовленной базе знаний и показывает,
+        на какие фрагменты опирался при ответе.
 
-        ### Что умеет ассистент
+        ### Что умеет помощник
 
-        - отвечает на вопросы по базе знаний;
-        - показывает источники ответа;
-        - различает основной конкурс и «ПРО Большие вызовы»;
-        - аккуратно отвечает на вопросы про возраст, классы, сроки и регистрацию;
-        - честно сообщает, если информации недостаточно;
-        - не пишет проект за участника;
-        - не обещает победу или прохождение отбора.
+        Помощник может рассказать, кто может участвовать в конкурсе,
+        какие есть направления, что нужно указать в заявке, чем основной конкурс
+        отличается от «ПРО Больших вызовов», где проходит региональный этап
+        и в каких случаях лучше уточнить информацию на официальных ресурсах.
 
-    
         ### Ограничения
 
-        Ассистент не является официальным источником информации.  
-        Актуальные сроки, форму регистрации, контакты и требования нужно проверять
-        на официальных ресурсах конкурса или уточнять у координатора.
+        Помощник не является официальным источником информации.
+        Актуальные сроки, регистрацию, контакты и официальные требования
+        нужно проверять на сайте конкурса или у координатора.
         """
     )
